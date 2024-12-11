@@ -1,0 +1,94 @@
+steps:
+  # Step 1: Set up Docker build for Flask
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Build Flask Docker Image'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/white-proxy-434723-d6/distributed-project-app-backend:$COMMIT_SHA'  # Tagging Flask Docker image
+      - './backend'  # Path to the Flask app's Dockerfile and source code
+
+  # Step 2: Push Flask Docker image to GCR
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Push Flask Docker Image to GCR'
+    args:
+      - 'push'
+      - 'gcr.io/white-proxy-434723-d6/distributed-project-app-backend:$COMMIT_SHA'  # Push to GCR
+
+  # Step 3: Authenticate to GKE and set the Kubernetes cluster context
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Authenticate to GKE'
+    args:
+      - 'container'
+      - 'clusters'
+      - 'get-credentials'
+      - '--location'
+      - 'us-central1'  # Update to the region of your GKE cluster
+      - '--project'
+      - 'white-proxy-434723-d6'  # Replace with your Google Cloud project ID
+      - 'flask-app-cluster'  # Replace with your actual GKE cluster name
+
+  # Step 4: Apply namespaces to ensure 'backend' and 'frontend' namespaces exist
+  - name: 'gcr.io/cloud-builders/kubectl'
+    id: 'Create Backend Namespace'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        # Check the current context to verify GKE connection
+        kubectl config current-context
+        # Create the namespace
+        kubectl apply -f ./deployment/backend/namespace.yml
+        kubectl apply -f ./deployment/frontend/namespace.yml  # Ensure frontend namespace is created
+
+  # Step 5: Deploy Flask App to GKE using the latest Docker image from GCR
+  - name: 'gcr.io/cloud-builders/kubectl'
+    id: 'Deploy Flask App'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        # Check the current context to verify GKE connection
+        kubectl config current-context
+        # Use sed to replace the placeholder with the actual image tag in the deployment file
+        sed -i 's#image: gcr.io/white-proxy-434723-d6/distributed-project-app-backend:.*#image: gcr.io/white-proxy-434723-d6/distributed-project-app-backend:$COMMIT_SHA#' ./deployment/backend/deployment.yml
+        # Apply the substituted YAML
+        kubectl apply -f ./deployment/backend/deployment.yml
+        kubectl apply -f ./deployment/backend/service.yml
+
+  # Step 8: Build React Docker Image
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Build React Docker Image'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/white-proxy-434723-d6/distributed-project-app-frontend:$COMMIT_SHA'  # Tagging React Docker image
+      - './frontend'  # Path to React Dockerfile and source code
+
+  # Step 9: Push React Docker image to GCR
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Push React Docker Image to GCR'
+    args:
+      - 'push'
+      - 'gcr.io/white-proxy-434723-d6/distributed-project-app-frontend:$COMMIT_SHA'  # Push to GCR
+
+  # Step 10: Deploy React App to GKE using the latest Docker image from GCR
+  - name: 'gcr.io/cloud-builders/kubectl'
+    id: 'Deploy React App'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        # Check the current context to verify GKE connection
+        kubectl config current-context
+        # Use sed to replace the placeholder with the actual image tag in the deployment file
+        sed -i 's#image: gcr.io/white-proxy-434723-d6/distributed-project-app-frontend:.*#image: gcr.io/white-proxy-434723-d6/distributed-project-app-frontend:$COMMIT_SHA#' ./deployment/frontend/deployment.yml
+        # Apply the manifest YAML
+        kubectl apply -f ./deployment/frontend/deployment.yml
+        kubectl apply -f ./deployment/frontend/service.yml
+
+# Timeout in case something goes wrong
+timeout: 1200s
+
+options:
+  logging: CLOUD_LOGGING_ONLY  # Logs will go to Cloud Logging
